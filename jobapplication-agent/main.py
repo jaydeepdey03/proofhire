@@ -2,25 +2,39 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, Path, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import httpx
-from langgraph.graph import StateGraph, END
-from langchain_openai import ChatOpenAI
-from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage
-from jobsearch_tools.PDFTool import load_pdf
-from pydantic import BaseModel
-from typing import TypedDict, Optional, Dict, Any, List
+import os
 import json
 import asyncio
 import logging
 from datetime import datetime
+from langgraph.graph import StateGraph, END
+from langchain_openai import ChatOpenAI
+from dotenv import load_dotenv
+from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage
 from langchain.prompts import ChatPromptTemplate
 from langchain.output_parsers import PydanticOutputParser
+from web3 import Web3
+from jobsearch_tools.PDFTool import load_pdf
+from pydantic import BaseModel
+from typing import TypedDict, Optional, Dict, Any, List
+from enum import Enum
+from models import Job, Candidate, Application, Location, JobType, ApplicationStatus, JobStatus, Company
+from contract_factory import contract_client
 import os
-from fastapi import HTTPException
-import httpx, os
+
+
+
+
 
 app = FastAPI(swagger_ui_parameters={"syntaxHighlight": {"theme": "obsidian"}}  )
 load_dotenv()
+
+HARDCODED_PRIVATE_KEY = os.getenv("PRIVATE_KEY")
+HARDCODED_WALLET_ADDRESS = os.getenv("PUBLIC_KEY")
+
+
+w3 = Web3(Web3.HTTPProvider("https://testnet.evm.nodes.onflow.org"))  # or your RPC URL
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -30,32 +44,15 @@ logger = logging.getLogger(__name__)
 model = ChatOpenAI(model="gpt-4o-mini", temperature=0.1)
 model = model.bind_tools(tools=[load_pdf])
 
-# Pydantic models for API
+
+
+# API models
 class JobSearchRequest(BaseModel):
     candidate_id: str
     resume_path: Optional[str] = None
     resume_text: Optional[str] = None
     preferences: Dict[str, Any] = {}
     compatibility_threshold: float = 0.7
-
-class Job(BaseModel):
-    id: str
-    title: str
-    company: str
-    description: str
-    requirements: List[str]
-    location: str
-    salary_range: Optional[str] = None
-    posted_date: str
-
-class CandidateProfile(BaseModel):
-    id: str
-    name: str
-    email: str
-    skills: List[str]
-    experience_years: int
-    education: List[str]
-    preferences: Dict[str, Any]
 
 class MatchedJob(BaseModel):
     job: Job
@@ -69,11 +66,21 @@ class ApplicationDetails(BaseModel):
     cover_letter: str
     tailored_resume: Optional[str] = None
 
+# For backward compatibility
+class CandidateProfile(BaseModel):
+    id: str
+    name: str
+    email: str
+    skills: List[str]
+    experience_years: int
+    education: List[str]
+    preferences: Dict[str, Any]
+
 # State definition for LangGraph
 class JobSearchState(TypedDict):
     candidate_id: str
     resume_text: Optional[str]
-    candidate_profile: Optional[CandidateProfile]
+    candidate_profile: Optional[Candidate]
     available_jobs: Optional[List[Job]]
     matched_jobs: Optional[List[MatchedJob]]
     compatibility_threshold: float
@@ -82,42 +89,48 @@ class JobSearchState(TypedDict):
     error_message: Optional[str]
     applications: Optional[List[ApplicationDetails]]
     resume_path: Optional[str]
+    application_results: Optional[List[Dict[str, Any]]]  # Add this
+    applications_summary: Optional[Dict[str, Any]]  # Add this
 
 class JobMatchEvaluation(BaseModel):
     score: float
     reasons: List[str]
     improvements: List[str]
 
-def run_with_tools(prompt: str, context_msgs: List = None):
-    """Enhanced tool runner with context support"""
+
+async def run_with_tools(prompt: str, context_msgs: List = None):
+    """Enhanced async tool runner with context support"""
     msgs = context_msgs or []
     msgs.append(HumanMessage(content=prompt))
     
     print(f"\n=== Tool Runner Debug ===")
     print(f"Input prompt: {prompt}")
     
-    result = model.invoke(msgs)
-    # print(f"Model result type: {type(result)}")
+    # Use async invoke if available, otherwise regular invoke
+    try:
+        result = await model.ainvoke(msgs)
+    except AttributeError:
+        # Fallback to sync invoke if ainvoke not available
+        result = model.invoke(msgs)
+    
     if hasattr(result, "tool_calls") and result.tool_calls:
         print(f"Tool calls found: {len(result.tool_calls)}")
         tc = result.tool_calls[0]
         tool_name = tc["name"]
         tool_args = tc["args"]
         
-        # print(f"Tool name: {tool_name}")
-        # print(f"Tool args: {tool_args}")
-        
         try:
             tool_output = load_pdf.invoke(tool_args)
-            # print(f"Tool output type: {type(tool_output)}")
-            # print(f"Tool output: {tool_output}")
             
             msgs.append(result)
             msgs.append(ToolMessage(content=str(tool_output), tool_call_id=tc["id"]))
             
-            result2 = model.invoke(msgs)
-            # print(f"Final result type: {type(result2)}")
-            # print(f"Final result: {result2}")
+            # Use async invoke again
+            try:
+                result2 = await model.ainvoke(msgs)
+            except AttributeError:
+                result2 = model.invoke(msgs)
+            
             print("=" * 25)
             return result2
         except Exception as e:
@@ -164,56 +177,58 @@ def validate_resume_content(text: str) -> tuple[bool, str]:
     except Exception as e:
         return False, f"Validation error: {str(e)}"
 
-def load_candidate_profile(state: JobSearchState) -> JobSearchState:
-    """Load candidate profile and resume"""
-    try:
-        # If resume_text is not provided, try to load from PDF
-        if not state.get("resume_text") and state.get("resume_path"):
-            prompt = f"Extract resume text from: {state['resume_path']}"
-            print(f"\n=== PDF Tool Execution ===")
-            print(f"Prompt: {prompt}")
-            result = run_with_tools(prompt)
-            print(f"Tool result type: {type(result)}")
+# async def load_candidate_profile(state: JobSearchState) -> JobSearchState:
+#     """Load candidate profile and resume"""
+#     try:
+#         # If resume_text is not provided, try to load from PDF
+#         # if not state.get("resume_text") and state.get("resume_path"):
+#         #     prompt = f"Extract resume text from: {state['resume_path']}"~
+#         #     print(f"\n=== PDF Tool Execution ===")
+#         #     print(f"Prompt: {prompt}")
+#         #     result = run_with_tools(prompt)
+#         #     print(f"Tool result type: {type(result)}")
             
-            extracted_text = result.content if hasattr(result, 'content') else str(result)
-            print(f"Extracted text preview: {extracted_text[:200] if extracted_text else 'None'}...")
+#         #     extracted_text = result.content if hasattr(result, 'content') else str(result)
+#         #     print(f"Extracted text preview: {extracted_text[:200] if extracted_text else 'None'}...")
             
-            # Validate if extracted text is actually resume content
-            is_valid, validation_reason = validate_resume_content(extracted_text)
-            print(f"Content validation: {is_valid} - {validation_reason}")
+#         #     # Validate if extracted text is actually resume content
+#         #     is_valid, validation_reason = validate_resume_content(extracted_text)
+#         #     print(f"Content validation: {is_valid} - {validation_reason}")
             
-            if is_valid:
-                state["resume_text"] = extracted_text
-                print("✅ Valid resume content - proceeding with job matching")
-            else:
-                # Use fallback or show warning
-                state["resume_text"] = "No valid resume content provided"
-                state["error_message"] = f"Invalid resume content: {validation_reason}"
-                print(f"❌ Invalid resume content: {validation_reason}")
-                print("Will proceed with basic profile matching only")
+#         #     if is_valid:
+#         #         state["resume_text"] = extracted_text
+#         #         print("✅ Valid resume content - proceeding with job matching")
+#         #     else:
+#         #         # Use fallback or show warning
+#         #         state["resume_text"] = "No valid resume content provided"
+#         #         state["error_message"] = f"Invalid resume content: {validation_reason}"
+#         #         print(f"❌ Invalid resume content: {validation_reason}")
+#         #         print("Will proceed with basic profile matching only")
             
-            print("=" * 30)
+#         #     print("=" * 30)
         
-        # Mock getting candidate profile - replace with actual call
-        profile = CandidateProfile(
-            id=state["candidate_id"],
-            name="Candidate",
-            email="candidate@example.com",
-            skills=["Python", "FastAPI", "AI"],
-            experience_years=3,
-            education=["BS Computer Science"],
-            preferences=state.get("preferences", {})
-        )
+#         # Mock getting candidate profile - replace with actual call
+#         # profile = CandidateProfile(
+#         #     id=state["candidate_id"],
+#         #     name="Candidate",
+#         #     email="candidate@example.com",
+#         #     skills=["Python", "FastAPI", "AI"],
+#         #     experience_years=3,
+#         #     education=["BS Computer Science"],
+#         #     preferences=state.get("preferences", {})
+#         # )
+
+#         profile = await contract_client.get_candidate(state["candidate_id"])
+#         print(profile, 'profile')
+#         state["candidate_profile"] = profile
+#         state["current_step"] = "profile_loaded"
+#         logger.info(f"Loaded profile for candidate: {state['candidate_id']}")
         
-        state["candidate_profile"] = profile
-        state["current_step"] = "profile_loaded"
-        logger.info(f"Loaded profile for candidate: {state['candidate_id']}")
-        
-    except Exception as e:
-        state["error_message"] = f"Error loading candidate profile: {str(e)}"
-        logger.error(state["error_message"])
+#     except Exception as e:
+#         state["error_message"] = f"Error loading candidate profile: {str(e)}"
+#         logger.error(state["error_message"])
     
-    return state
+#     return state
 
 # Mock functions - replace these with your actual backend calls
 async def get_candidate_profile(candidate_id: str) -> CandidateProfile:
@@ -230,40 +245,71 @@ async def get_candidate_profile(candidate_id: str) -> CandidateProfile:
 
 async def get_available_jobs() -> List[Job]:
     """Mock function - replace with actual database call"""
-    return [
-        Job(
-            id="job1",
-            title="Senior Python Developer",
-            company="Tech Corp",
-            description="Looking for experienced Python developer with FastAPI experience",
-            requirements=["Python", "FastAPI", "5+ years experience"],
-            location="Remote",
-            salary_range="$90,000-$120,000",
-            posted_date="2024-01-15"
-        ),
-        Job(
-            id="job2",
-            title="ML Engineer",
-            company="AI Startup",
-            description="Machine learning engineer for cutting-edge AI applications",
-            requirements=["Python", "Machine Learning", "TensorFlow", "3+ years experience"],
-            location="San Francisco",
-            salary_range="$110,000-$150,000",
-            posted_date="2024-01-16"
-        )
-    ]
+    return await contract_client.get_all_jobs()
+    # return [
+    #     Job(
+    #         jobId="job1",
+    #         companyId="company1",
+    #         title="Senior Python Developer",
+    #         description="Looking for experienced Python developer with FastAPI experience",
+    #         requirements=["Python", "FastAPI", "5+ years experience"],
+    #         skills=["Python", "FastAPI", "REST APIs"],
+    #         location=Location.REMOTE,
+    #         salaryRange=["90000", "120000"],
+    #         jobType=JobType.FULLTIME,
+    #         status=JobStatus.ACTIVE
+    #     ),
+    #     Job(
+    #         jobId="job2",
+    #         companyId="company2",
+    #         title="ML Engineer",
+    #         description="Machine learning engineer for cutting-edge AI applications",
+    #         requirements=["Python", "Machine Learning", "TensorFlow", "3+ years experience"],
+    #         skills=["Python", "Machine Learning", "TensorFlow", "PyTorch"],
+    #         location=Location.HYBRID,
+    #         salaryRange=["110000", "150000"],
+    #         jobType=JobType.FULLTIME,
+    #         status=JobStatus.ACTIVE
+    #     )
+    # ]
 
 async def apply_to_job(application: ApplicationDetails) -> Dict[str, Any]:
-    """Mock function - replace with actual backend call"""
-    logger.info(f"Applying to job {application.job_id} for candidate {application.candidate_id}")
-    return {
-        "application_id": f"app_{application.job_id}_{application.candidate_id}",
-        "status": "submitted",
-        "submitted_at": datetime.now().isoformat()
-    }
+    """Submit application using contract with hardcoded wallet"""
+    try:
+        application_id = f"app_{application.job_id}_{application.candidate_id}_{int(datetime.now().timestamp())}"
+        
+        success = await contract_client.submit_application(
+            application_id,
+            application.job_id,
+            application.candidate_id,
+            datetime.now().isoformat()
+        )
+        
+        if success:
+            return {
+                "application_id": application_id,
+                "status": "submitted",
+                "submitted_at": datetime.now().isoformat(),
+                "job_id": application.job_id,
+                "candidate_id": application.candidate_id
+            }
+        else:
+            return {
+                "application_id": application_id,
+                "status": "failed",
+                "error": "Transaction failed"
+            }
+        
+    except Exception as e:
+        logger.error(f"Error applying to job: {e}")
+        return {
+            "application_id": f"app_{application.job_id}_{application.candidate_id}",
+            "status": "failed",
+            "error": str(e)
+        }
 
 # LangGraph node functions
-def load_candidate_profile(state: JobSearchState) -> JobSearchState:
+async def load_candidate_profile(state: JobSearchState) -> JobSearchState:
     """Load candidate profile and resume"""
     try:
         # If resume_text is not provided, try to load from PDF
@@ -271,25 +317,19 @@ def load_candidate_profile(state: JobSearchState) -> JobSearchState:
             prompt = f"Extract resume text from: {state['resume_path']}"
             print(f"\n=== PDF Tool Execution ===")
             print(f"Prompt: {prompt}")
-            result = run_with_tools(prompt)
-            # print(f"Tool result type: {type(result)}")
-            # if hasattr(result, 'content'):
-                # print(f"Result content: {result.content[:200]}...")
-            state["resume_text"] = result.content if hasattr(result, 'content') else str(result)
-            # print(f"Final resume_text: {state['resume_text'][:200] if state['resume_text'] else 'None'}...")
-
+            
+            # NOW this is an async call
+            result = await run_with_tools(prompt)
+            
             extracted_text = result.content if hasattr(result, 'content') else str(result)
-            # print(f"Extracted text preview: {extracted_text[:200] if extracted_text else 'None'}...")
             
             # Validate if extracted text is actually resume content
             is_valid, validation_reason = validate_resume_content(extracted_text)
-            # print(f"Content validation: {is_valid} - {validation_reason}")
 
             if is_valid:
                 state["resume_text"] = extracted_text
                 print("✅ Valid resume content - proceeding with job matching")
             else:
-                # Use fallback or show warning
                 state["resume_text"] = "No valid resume content provided"
                 state["error_message"] = f"Invalid resume content: {validation_reason}"
                 print(f"❌ Invalid resume content: {validation_reason}")
@@ -297,18 +337,8 @@ def load_candidate_profile(state: JobSearchState) -> JobSearchState:
             
             print("=" * 30)
 
-        # print(result, 'result')
-        
-        # Mock getting candidate profile - replace with actual call
-        profile = CandidateProfile(
-            id=state["candidate_id"],
-            name="Candidate",
-            email="candidate@example.com",
-            skills=["Python", "FastAPI", "AI"],
-            experience_years=3,
-            education=["BS Computer Science"],
-            preferences=state.get("preferences", {})
-        )
+        profile = await contract_client.get_candidate(state["candidate_id"])
+        print(profile, 'profile')
         
         state["candidate_profile"] = profile
         state["current_step"] = "profile_loaded"
@@ -320,65 +350,20 @@ def load_candidate_profile(state: JobSearchState) -> JobSearchState:
     
     return state
 
-def fetch_jobs(state: JobSearchState) -> JobSearchState:
+async def fetch_jobs(state: JobSearchState) -> JobSearchState:
     """Fetch available jobs from database"""
     try:
-        # Mock job fetching - replace with actual database call
-        jobs = [
-            Job(
-                id="job1",
-                title="Senior Python Developer",
-                company="Tech Corp",
-                description="Looking for experienced Python developer with FastAPI experience",
-                requirements=["Python", "FastAPI", "5+ years experience"],
-                location="Remote",
-                salary_range="$90,000-$120,000",
-                posted_date="2024-01-15"
-            ),
-            Job(
-                id="job2",
-                title="ML Engineer",
-                company="AI Startup", 
-                description="Machine learning engineer for cutting-edge AI applications",
-                requirements=["Python", "Machine Learning", "TensorFlow", "3+ years experience"],
-                location="San Francisco",
-                salary_range="$110,000-$150,000",
-                posted_date="2024-01-16"
-            ),
-            Job(
-                id="job3",
-                title="Backend Developer",
-                company="Web Solutions",
-                description="Backend developer with experience in Node.js and databases",
-                requirements=["Node.js", "SQL", "3+ years experience"],
-                location="New York",
-                salary_range="$80,000-$100,000",
-                posted_date="2024-01-10"
-            ),
-
-            Job(
-                id="job4",
-                title="Data Scientist",
-                company="Data Insights",
-                description="Data scientist with strong statistical and machine learning skills",
-                requirements=["Python", "R", "Machine Learning", "Statistics", "2+ years experience"],
-                location="Remote",
-                salary_range="$100,000-$130,000",
-                posted_date="2024-01-12"
-            )
-        ]
-        
+        jobs = await contract_client.get_all_jobs()
+        print(jobs, 'fucku')
         state["available_jobs"] = jobs
         state["current_step"] = "jobs_fetched"
         logger.info(f"Fetched {len(jobs)} available jobs")
-        
     except Exception as e:
         state["error_message"] = f"Error fetching jobs: {str(e)}"
         logger.error(state["error_message"])
-    
     return state
 
-def match_jobs(state: JobSearchState) -> JobSearchState:
+async def match_jobs(state: JobSearchState) -> JobSearchState:
     """Use AI to match jobs with candidate profile"""
     try:
         candidate = state["candidate_profile"]
@@ -406,16 +391,16 @@ def match_jobs(state: JobSearchState) -> JobSearchState:
 
                     Candidate Profile:
                     - Skills: {skills}
-                    - Experience: {experience_years} years
                     - Education: {education}
                     - Resume: {resume}
 
                     Job Details:
                     - Title: {title}
-                    - Company: {company}
+                    - Company ID: {companyId}
                     - Description: {description}
                     - Requirements: {requirements}
                     - Location: {location}
+                    - Job Type: {jobType}
 
                     Analyze the compatibility and provide a detailed assessment.
                     
@@ -425,21 +410,21 @@ def match_jobs(state: JobSearchState) -> JobSearchState:
                 # Format the messages with actual data
                 formatted_messages = prompt.format_messages(
                     skills=", ".join(candidate.skills),
-                    experience_years=candidate.experience_years,
                     education=", ".join(candidate.education),
                     resume=resume_text[:800] if has_valid_resume else "No detailed resume available",
                     title=job.title,
-                    company=job.company,
+                    companyId=job.companyId,
                     description=job.description,
                     requirements=", ".join(job.requirements),
-                    location=job.location,
+                    location=job.location.value,
+                    jobType=job.jobType.value,
                     format_instructions=parser.get_format_instructions()
                 )
 
                 # Get AI response
                 response = model.invoke(formatted_messages)
                 
-                print(f"\n=== AI Response for Job {job.id} ===")
+                print(f"\n=== AI Response for Job {job.jobId} ===")
                 # print(f"Raw response: {response.content}")
                 # print("=" * 50)
 
@@ -452,7 +437,7 @@ def match_jobs(state: JobSearchState) -> JobSearchState:
 
                 # Check if job meets threshold
                 if parsed_result.score >= threshold:
-                    print(f"✅ Job {job.id} matches! Score: {parsed_result.score} >= {threshold}")
+                    print(f"✅ Job {job.jobId} matches! Score: {parsed_result.score} >= {threshold}")
                     matched_jobs.append(MatchedJob(
                         job=job,
                         compatibility_score=parsed_result.score,
@@ -460,18 +445,18 @@ def match_jobs(state: JobSearchState) -> JobSearchState:
                         suggested_improvements=parsed_result.improvements
                     ))
                 else:
-                    print(f"❌ Job {job.id} doesn't match. Score: {parsed_result.score} < {threshold}")
+                    print(f"❌ Job {job.jobId} doesn't match. Score: {parsed_result.score} < {threshold}")
 
             except Exception as parse_error:
-                print(f"❌ Parse error for job {job.id}: {parse_error}")
+                print(f"❌ Parse error for job {job.jobId}: {parse_error}")
                 print(f"Raw response was: {response.content if 'response' in locals() else 'No response'}")
-                logger.warning(f"Could not parse AI response for job {job.id}: {parse_error}")
+                logger.warning(f"Could not parse AI response for job {job.jobId}: {parse_error}")
                 
                 # Fallback to basic skill matching
                 try:
                     skill_overlap = len(set(candidate.skills) & set(job.requirements)) / len(job.requirements) if job.requirements else 0
                     if skill_overlap >= threshold:
-                        print(f"✅ Using fallback scoring for job {job.id}: {skill_overlap}")
+                        print(f"✅ Using fallback scoring for job {job.jobId}: {skill_overlap}")
                         matched_jobs.append(MatchedJob(
                             job=job,
                             compatibility_score=skill_overlap,
@@ -479,9 +464,9 @@ def match_jobs(state: JobSearchState) -> JobSearchState:
                             suggested_improvements=["Enhance matching skills", "Provide more detailed resume"]
                         ))
                     else:
-                        print(f"❌ Fallback scoring too low for job {job.id}: {skill_overlap}")
+                        print(f"❌ Fallback scoring too low for job {job.jobId}: {skill_overlap}")
                 except Exception as fallback_error:
-                    print(f"❌ Fallback scoring failed for job {job.id}: {fallback_error}")
+                    print(f"❌ Fallback scoring failed for job {job.jobId}: {fallback_error}")
         
         # Sort by compatibility score
         matched_jobs.sort(key=lambda x: x.compatibility_score, reverse=True)
@@ -496,46 +481,28 @@ def match_jobs(state: JobSearchState) -> JobSearchState:
     
     return state
 
-def generate_applications(state: JobSearchState) -> JobSearchState:
-    """Generate cover letters and prepare applications"""
+async def generate_applications(state: JobSearchState) -> JobSearchState:
+    """Prepare applications without cover letters"""
     try:
         matched_jobs = state["matched_jobs"]
         candidate = state["candidate_profile"]
         applications = []
         
+        logger.info(f"Preparing applications for {len(matched_jobs)} matched jobs")
+        
         for matched_job in matched_jobs:
             job = matched_job.job
             
-            # Generate tailored cover letter
-            prompt = f"""
-            Generate a professional cover letter for this job application:
-            
-            Candidate: {candidate.name}
-            Skills: {', '.join(candidate.skills)}
-            Experience: {candidate.experience_years} years
-            
-            Job: {job.title} at {job.company}
-            Description: {job.description}
-            Requirements: {', '.join(job.requirements)}
-            
-            Match reasons: {', '.join(matched_job.match_reasons)}
-            
-            Create a concise, professional cover letter (200-300 words) highlighting relevant experience and enthusiasm.
-            """
-            
-            result = model.invoke([HumanMessage(content=prompt)])
-            cover_letter = result.content
-            
+            # Create simple application without cover letter
             applications.append(ApplicationDetails(
-                job_id=job.id,
-                candidate_id=candidate.id,
-                cover_letter=cover_letter
+                job_id=job.jobId,
+                candidate_id=candidate.candidateId,
+                cover_letter=""  # Empty cover letter as we don't need it
             ))
         
-        print(applications, 'applications')
         state["applications"] = applications
         state["current_step"] = "applications_generated"
-        logger.info(f"Generated {len(applications)} applications")
+        logger.info(f"Prepared {len(applications)} applications")
         
     except Exception as e:
         state["error_message"] = f"Error generating applications: {str(e)}"
@@ -543,13 +510,100 @@ def generate_applications(state: JobSearchState) -> JobSearchState:
     
     return state
 
+async def apply_to_jobs_node(state: JobSearchState) -> JobSearchState:
+    """Apply to all matched jobs using the smart contract"""
+    try:
+        applications = state.get("applications", [])
+        if not applications:
+            state["error_message"] = "No applications to submit"
+            return state
+        
+        application_results = []
+        successful_applications = 0
+        failed_applications = 0
+        
+        logger.info(f"Starting to apply to {len(applications)} jobs")
+        
+        for i, application in enumerate(applications):
+            try:
+                logger.info(f"Applying to job {i+1}/{len(applications)}: {application.job_id}")
+                
+                # Generate unique application ID
+                application_id = f"app_{application.job_id}_{application.candidate_id}_{int(datetime.now().timestamp())}_{i}"
+                
+                # Submit application to smart contract
+                success = await contract_client.submit_application(
+                    application_id,
+                    application.job_id,
+                    application.candidate_id,
+                    datetime.now().isoformat()
+                )
+                
+                if success:
+                    successful_applications += 1
+                    result = {
+                        "application_id": application_id,
+                        "job_id": application.job_id,
+                        "status": "submitted",
+                        "submitted_at": datetime.now().isoformat(),
+                        "message": "Application submitted successfully to blockchain"
+                    }
+                    logger.info(f"✅ Application {application_id} submitted successfully")
+                else:
+                    failed_applications += 1
+                    result = {
+                        "application_id": application_id,
+                        "job_id": application.job_id,
+                        "status": "failed",
+                        "submitted_at": datetime.now().isoformat(),
+                        "error": "Smart contract transaction failed"
+                    }
+                    logger.error(f"❌ Application {application_id} failed")
+                
+                application_results.append(result)
+                
+                # Add small delay between applications
+                await asyncio.sleep(1)
+                
+            except Exception as app_error:
+                failed_applications += 1
+                error_result = {
+                    "application_id": f"app_{application.job_id}_{application.candidate_id}_error",
+                    "job_id": application.job_id,
+                    "status": "failed",
+                    "submitted_at": datetime.now().isoformat(),
+                    "error": str(app_error)
+                }
+                application_results.append(error_result)
+                logger.error(f"❌ Error applying to job {application.job_id}: {app_error}")
+        
+        # Update state with results
+        state["application_results"] = application_results
+        state["applications_summary"] = {
+            "total": len(applications),
+            "successful": successful_applications,
+            "failed": failed_applications,
+            "success_rate": successful_applications / len(applications) if applications else 0,
+            "submission_timestamp": datetime.now().isoformat()
+        }
+        state["current_step"] = "applications_submitted"
+        
+        logger.info(f"Application process completed: {successful_applications} successful, {failed_applications} failed")
+        
+    except Exception as e:
+        state["error_message"] = f"Error in application process: {str(e)}"
+        logger.error(state["error_message"])
+    
+    return state
+
+
 def should_continue(state: JobSearchState) -> str:
     """Determine next step in workflow"""
     if state.get("error_message"):
         return END
-    
+
     current_step = state.get("current_step", "")
-    
+
     if current_step == "profile_loaded":
         return "fetch_jobs"
     elif current_step == "jobs_fetched":
@@ -557,6 +611,8 @@ def should_continue(state: JobSearchState) -> str:
     elif current_step == "jobs_matched":
         return "generate_applications"
     elif current_step == "applications_generated":
+        return "apply_jobs"   # <-- FIXED: was "" before
+    elif current_step == "applications_submitted":
         return END
     else:
         return "load_profile"
@@ -569,6 +625,7 @@ workflow.add_node("load_profile", load_candidate_profile)
 workflow.add_node("fetch_jobs", fetch_jobs)
 workflow.add_node("match_jobs", match_jobs)
 workflow.add_node("generate_applications", generate_applications)
+workflow.add_node("apply_jobs", apply_to_jobs_node)
 
 # Add edges
 workflow.set_entry_point("load_profile")
@@ -598,6 +655,14 @@ workflow.add_conditional_edges(
 )
 workflow.add_conditional_edges(
     "generate_applications",
+    should_continue,
+    {
+        "apply_jobs": "apply_jobs",  # FIXED: Make sure this edge exists
+        END: END
+    }
+)
+workflow.add_conditional_edges(
+    "apply_jobs",
     should_continue,
     {
         END: END
@@ -644,9 +709,13 @@ async def search_jobs(request: JobSearchRequest):
             "matched_jobs_count": len(result.get("matched_jobs", [])),
             "matched_jobs": [
                 {
-                    "job_id": job.job.id,
+                    "job_id": job.job.jobId,
                     "title": job.job.title,
-                    "company": job.job.company,
+                    "company_id": job.job.companyId,
+                    "description": job.job.description,
+                    "location": job.job.location.value,
+                    "job_type": job.job.jobType.value,
+                    "salary_range": job.job.salaryRange,
                     "compatibility_score": job.compatibility_score,
                     "match_reasons": job.match_reasons,
                     "suggested_improvements": job.suggested_improvements
@@ -681,8 +750,8 @@ async def stream_job_search(
             # Stream each step
             yield f"data: {json.dumps({'step': 'started', 'message': 'Starting job search'})}\n\n"
             
-            # Run workflow with streaming
-            for step_result in app_workflow.stream(initial_state):
+            # FIXED: Use async for loop with astream
+            async for step_result in app_workflow.astream(initial_state):
                 step_name = list(step_result.keys())[0]
                 state = step_result[step_name]
                 
@@ -704,7 +773,7 @@ async def stream_job_search(
     
     return StreamingResponse(
         generate_stream(),
-        media_type="text/plain",
+        media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
     )
 
@@ -761,6 +830,7 @@ async def get_jobs():
     """Get all available jobs"""
     try:
         jobs = await get_available_jobs()
+        print(jobs, 'jobs')
         return {"jobs": jobs, "count": len(jobs)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching jobs: {str(e)}")
@@ -805,3 +875,4 @@ async def set_user_metadata(req: MetadataUpdateRequest):
     except Exception as e:
         print("Unexpected error:", e)
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+

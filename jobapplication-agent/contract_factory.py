@@ -157,52 +157,131 @@ class ContractClient:
             return []
     
     async def submit_application(self, application_id: str, job_id: str, candidate_id: str, application_date: str) -> bool:
-        """Submit an application to the smart contract"""
+        """Submit an application to the smart contract using hardcoded wallet"""
         try:
-            # This would require a wallet with gas to submit transactions
-            # For read-only operations, we'll just log this for now
-            logger.info(f"Would submit application {application_id} for job {job_id} by candidate {candidate_id}")
+            # Get hardcoded wallet from environment variables
+            private_key = os.getenv("PRIVATE_KEY")
+            if not private_key:
+                logger.error("PRIVATE_KEY not found in environment variables")
+                return False
             
-            # In a real implementation, you'd need:
-            # 1. A funded wallet/account
-            # 2. Gas estimation
-            # 3. Transaction signing and submission
+            # Ensure proper private key format
+            if private_key.startswith('0x'):
+                private_key = private_key[2:]
+            private_key = '0x' + private_key
             
-            return True
+            # Create account from private key
+            account = Account.from_key(private_key)
+            logger.info(f"Using wallet address: {account.address}")
             
+            # Check if wallet has sufficient balance
+            balance = self.w3.eth.get_balance(account.address)
+            balance_in_flow = self.w3.from_wei(balance, 'ether')
+            logger.info(f"Wallet balance: {balance_in_flow} FLOW")
+            
+            if balance == 0:
+                logger.error("Wallet has no balance for gas fees")
+                return False
+            
+            # Build the transaction for submitApplication function
+            function_call = self.contract.functions.submitApplication(
+                application_id,    # _applicationId
+                job_id,           # _jobId  
+                candidate_id,     # _candidateId
+                application_date  # _applicationDate
+            )
+            
+            # Get current nonce
+            nonce = self.w3.eth.get_transaction_count(account.address)
+            logger.info(f"Current nonce: {nonce}")
+            
+            # Estimate gas
+            try:
+                gas_estimate = function_call.estimate_gas({'from': account.address})
+                logger.info(f"Estimated gas: {gas_estimate}")
+            except Exception as gas_error:
+                logger.error(f"Gas estimation failed: {gas_error}")
+                # Use a reasonable default if estimation fails
+                gas_estimate = 300000
+            
+            # Get current gas price
+            gas_price = self.w3.eth.gas_price
+            gas_price_gwei = self.w3.from_wei(gas_price, 'gwei')
+            logger.info(f"Gas price: {gas_price_gwei} gwei")
+            
+            # Calculate transaction cost
+            tx_cost = gas_estimate * gas_price
+            tx_cost_flow = self.w3.from_wei(tx_cost, 'ether')
+            
+            if balance < tx_cost:
+                logger.error(f"Insufficient balance for transaction. Need: {tx_cost_flow} FLOW, Have: {balance_in_flow} FLOW")
+                return False
+            
+            # Build transaction
+            transaction = function_call.build_transaction({
+                'from': account.address,
+                'nonce': nonce,
+                'gas': gas_estimate + 50000,  # Add buffer to gas estimate
+                'gasPrice': gas_price,
+            })
+            
+            logger.info(f"Transaction built - Gas: {transaction['gas']}, Gas Price: {gas_price_gwei} gwei")
+            logger.info(f"Submitting application: {application_id} for job: {job_id} by candidate: {candidate_id}")
+            
+            # Sign the transaction
+            signed_txn = self.w3.eth.account.sign_transaction(transaction, private_key=private_key)
+            
+            # Send the transaction
+            tx_hash = self.w3.eth.send_raw_transaction(signed_txn.raw_transaction)
+            tx_hash_hex = tx_hash.hex()
+            
+            logger.info(f"Transaction sent with hash: {tx_hash_hex}")
+            
+            # Wait for transaction confirmation
+            try:
+                logger.info("Waiting for transaction confirmation...")
+                receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+                
+                if receipt.status == 1:
+                    logger.info(f"✅ Application submitted successfully!")
+                    logger.info(f"   Application ID: {application_id}")
+                    logger.info(f"   Job ID: {job_id}")
+                    logger.info(f"   Candidate ID: {candidate_id}")
+                    logger.info(f"   Block: {receipt.blockNumber}")
+                    logger.info(f"   Gas used: {receipt.gasUsed}")
+                    logger.info(f"   Transaction hash: {tx_hash_hex}")
+                    
+                    # Check for events (optional)
+                    try:
+                        # Look for ApplicationSubmitted event
+                        events = self.contract.events.ApplicationSubmitted().processReceipt(receipt)
+                        if events:
+                            logger.info(f"   Event emitted: ApplicationSubmitted")
+                            for event in events:
+                                logger.info(f"   Event args: {event.args}")
+                    except Exception as event_error:
+                        logger.warning(f"Could not process events: {event_error}")
+                    
+                    return True
+                else:
+                    logger.error(f"❌ Transaction failed with status: {receipt.status}")
+                    logger.error(f"   Transaction hash: {tx_hash_hex}")
+                    return False
+                    
+            except Exception as receipt_error:
+                logger.error(f"Error waiting for transaction receipt: {receipt_error}")
+                logger.error(f"Transaction hash: {tx_hash_hex} (check manually on blockchain explorer)")
+                # Transaction might still be pending, but we'll consider it failed for now
+                return False
+                
+        except ValueError as ve:
+            if "insufficient funds" in str(ve).lower():
+                logger.error(f"Insufficient funds for transaction: {ve}")
+            else:
+                logger.error(f"Value error submitting application: {ve}")
+            return False
         except Exception as e:
             logger.error(f"Error submitting application: {e}")
             return False
-
-    async def get_all_jobs(self) -> List[Job]:
-        """Fetch all jobs from the smart contract"""
-        try:
-            # Call the smart contract
-            jobs_data = self.contract.functions.getAllJobs().call()
-            
-            jobs = []
-            for job_tuple in jobs_data:
-                job = Job(
-                    jobId=job_tuple[0],
-                    companyId=job_tuple[1], 
-                    title=job_tuple[2],
-                    description=job_tuple[3],
-                    requirements=list(job_tuple[4]),
-                    skills=list(job_tuple[5]),
-                    location=self._map_location(job_tuple[6]),
-                    salaryRange=list(job_tuple[7]),
-                    jobType=self._map_job_type(job_tuple[8]),
-                    status=self._map_job_status(job_tuple[9])
-                )
-                
-                jobs.append(job)
-            
-            logger.info(f"Fetched {len(jobs)} jobs from contract")
-            return jobs
-            
-        except Exception as e:
-            logger.error(f"Error fetching jobs from contract: {e}")
-            return []
-
 # Global contract client instance
 contract_client = ContractClient()
