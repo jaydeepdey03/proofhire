@@ -52,9 +52,11 @@ const AppContent: React.FC = () => {
         <Route path="profile" element={<CompanyInfo />} />
         <Route index element={<CompanyOverview />} />
         <Route path="jobs" element={<JobManagement />} />
+         <Route path="/" element={<LoginForm />} />
       </Route>
 
       <Route path="*" element={<div>Page not found</div>} />
+
     </Routes>
   );
 };
