@@ -18,6 +18,7 @@ import { JobManagement } from "./company/JobManagement";
 // Replace this with any of the networks listed at https://github.com/wevm/viem/blob/main/src/chains/index.ts
 import { flowTestnet } from "viem/chains";
 import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
+import { LoginForm } from "./LoginForm";
 
 const AppContent: React.FC = () => {
   const { loading } = useGlobalContext();
