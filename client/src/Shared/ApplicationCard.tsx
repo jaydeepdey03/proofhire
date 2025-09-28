@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   Calendar,
   MapPin,
@@ -8,12 +8,64 @@ import {
   Upload,
   Eye,
 } from "lucide-react";
-import { type Application } from "@/types/index";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+
+// Type definitions for ApplicationCard
+interface ProofDocument {
+  name: string;
+  uploadDate: string;
+}
+
+interface CompanyAction {
+  status: string;
+  actionDate: string;
+  proofDocument?: ProofDocument;
+}
+
+interface Candidate {
+  name: string;
+  candidateId: string;
+}
+
+interface Job {
+  title: string;
+  location: string;
+}
+
+interface Company {
+  companyName: string;
+}
+
+interface Application {
+  id: string;
+  job: Job;
+  company?: Company;
+  candidate: Candidate;
+  status: string;
+  appliedAt: string;
+  companyAction?: CompanyAction;
+  candidateVerified?: boolean;
+  verificationDate?: string;
+}
 
 interface ApplicationCardProps {
-  application: Application[];
+  application: Application;
   userRole: "candidate" | "company";
-  onStatusChange: (id: string, status: "approved" | "rejected") => void;
+  onStatusChange: (
+    id: string,
+    status:
+      | "approved"
+      | "rejected"
+      | "reviewed"
+      | "pending"
+      | "pending for proof"
+  ) => void;
   onFileUpload: (id: string, file: File) => void;
   onVerify: (id: string) => void;
 }
@@ -57,13 +109,28 @@ const ApplicationCard: React.FC<ApplicationCardProps> = ({
     application.status === "approved" &&
     !application.companyAction?.proofDocument;
 
+  // Candidate can verify when status is 'pending for proof' (after company uploads proof)
+  const canShowVerificationPendingProof =
+    userRole === "candidate" && application.status === "pending for proof";
   // Candidate can verify when there's a proof document and status is approved
+
+  console.log(
+    "canShowVerificationPendingProof:",
+    canShowVerificationPendingProof
+  );
   const canShowVerification =
     userRole === "candidate" &&
     application.status === "approved" &&
     application.companyAction?.proofDocument;
-  // &&
-  // !application.candidateVerified;
+
+  const [open, setOpen] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [isGeneratingProof, setIsGeneratingProof] = useState(false);
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  // For candidate proof modal
+  const [verifyModalOpen, setVerifyModalOpen] = useState(false);
+  const [candidateProofText, setCandidateProofText] = useState("");
+  const [isProving, setIsProving] = useState(false);
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-lg transition-all duration-300 hover:border-gray-300">
@@ -116,12 +183,127 @@ const ApplicationCard: React.FC<ApplicationCardProps> = ({
       {/* Company Actions - Only show when status is pending */}
       {canShowCompanyActions && (
         <div className="mb-4">
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Approve Application & Upload Proof</DialogTitle>
+                <DialogDescription>
+                  <div className="my-4">
+                    <label className="block mb-3 text-sm font-medium text-gray-700">
+                      Upload Proof Document (PDF)
+                    </label>
+                    <div
+                      className={`relative border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+                        file
+                          ? "border-green-300 bg-green-50"
+                          : "border-gray-300 bg-gray-50 hover:border-gray-400 hover:bg-gray-100"
+                      }`}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const droppedFile = e.dataTransfer.files?.[0];
+                        if (
+                          droppedFile &&
+                          droppedFile.type === "application/pdf"
+                        ) {
+                          setFile(droppedFile);
+                        }
+                      }}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                      }}
+                      onDragEnter={(e) => {
+                        e.preventDefault();
+                      }}
+                    >
+                      <input
+                        type="file"
+                        accept="application/pdf"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f && f.type === "application/pdf") setFile(f);
+                        }}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      />
+                      {!file ? (
+                        <div className="space-y-3">
+                          <div className="flex justify-center">
+                            <Upload className="w-12 h-12 text-gray-400" />
+                          </div>
+                          <div>
+                            <p className="text-lg font-medium text-gray-700 mb-1">
+                              Drop your PDF here
+                            </p>
+                            <p className="text-sm text-gray-500">
+                              or{" "}
+                              <span className="text-blue-600 underline">
+                                click to browse
+                              </span>
+                            </p>
+                          </div>
+                          <p className="text-xs text-gray-400">
+                            Only PDF files are supported
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <div className="flex justify-center">
+                            <FileText className="w-12 h-12 text-green-600" />
+                          </div>
+                          <div>
+                            <p className="text-lg font-medium text-green-700 mb-1">
+                              {file.name}
+                            </p>
+                            <p className="text-sm text-green-600">
+                              {(file.size / 1024 / 1024).toFixed(2)} MB
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setFile(null);
+                            }}
+                            className="text-sm text-red-600 hover:text-red-700 underline"
+                          >
+                            Remove file
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    disabled={!file || isGeneratingProof || isUpdatingStatus}
+                    className="mt-4 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60"
+                    onClick={async () => {
+                      setIsGeneratingProof(true);
+                      // Simulate proof generation
+                      await new Promise((res) => setTimeout(res, 60000));
+                      setIsGeneratingProof(false);
+                      setIsUpdatingStatus(true);
+                      // Call blockchain (simulate with status update)
+                      onFileUpload(application.id, file!);
+                      onStatusChange(application.id, "pending for proof");
+                      setIsUpdatingStatus(false);
+                      setOpen(false);
+                      setFile(null);
+                    }}
+                  >
+                    {isGeneratingProof
+                      ? "Generating Proof... (wait 60s)"
+                      : isUpdatingStatus
+                      ? "Updating Status..."
+                      : "Approve & Upload"}
+                  </button>
+                </DialogDescription>
+              </DialogHeader>
+            </DialogContent>
+          </Dialog>
           <p className="text-sm font-medium text-gray-700 mb-3">
             Review Application:
           </p>
           <div className="flex gap-3">
             <button
-              onClick={() => onStatusChange(application.id, "approved")}
+              onClick={() => setOpen(true)}
               className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors duration-200 text-sm font-medium"
             >
               <Check className="w-4 h-4" />
@@ -141,19 +323,44 @@ const ApplicationCard: React.FC<ApplicationCardProps> = ({
       {/* File Upload for Company - Show after approval */}
       {canShowFileUpload && (
         <div className="mb-4">
-          <p className="text-sm font-medium text-gray-700 mb-2">
-            Upload Proof Document (PDF):
+          <p className="text-sm font-medium text-gray-700 mb-3">
+            Upload Proof Document (PDF)
           </p>
-          <label className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 cursor-pointer text-sm font-medium">
-            <Upload className="w-4 h-4" />
-            Upload PDF
+          <div
+            className="relative border-2 border-dashed border-gray-300 rounded-lg p-6 text-center bg-gray-50 hover:border-gray-400 hover:bg-gray-100 transition-colors"
+            onDrop={(e) => {
+              e.preventDefault();
+              const droppedFile = e.dataTransfer.files?.[0];
+              if (droppedFile && droppedFile.type === "application/pdf") {
+                handleFileUpload({ target: { files: [droppedFile] } } as any);
+              }
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+            }}
+            onDragEnter={(e) => {
+              e.preventDefault();
+            }}
+          >
             <input
               type="file"
               accept="application/pdf"
               onChange={handleFileUpload}
-              className="hidden"
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             />
-          </label>
+            <div className="space-y-2">
+              <div className="flex justify-center">
+                <Upload className="w-8 h-8 text-gray-400" />
+              </div>
+              <p className="text-sm font-medium text-gray-700">
+                Drop your PDF here or{" "}
+                <span className="text-blue-600 underline">click to browse</span>
+              </p>
+              <p className="text-xs text-gray-500">
+                Only PDF files are supported
+              </p>
+            </div>
+          </div>
         </div>
       )}
 
@@ -179,22 +386,54 @@ const ApplicationCard: React.FC<ApplicationCardProps> = ({
         </div>
       )}
 
-      {/* Candidate Verification - Show when approved with proof document */}
-      {canShowVerification && (
-        <div className="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
-          <p className="text-sm text-gray-700 mb-3">
-            <span className="font-medium">Next Step:</span> The company has
-            approved your application and uploaded proof. Please verify the
-            document to confirm your final status.
-          </p>
+      {/* Candidate Verification - Show button, then modal with input, for 'pending for proof' */}
+      {canShowVerificationPendingProof && (
+        <>
           <button
-            onClick={() => onVerify(application.id)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 text-sm font-medium"
+            onClick={() => setVerifyModalOpen(true)}
+            className="mb-4 flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 text-sm font-medium"
           >
             <Check className="w-4 h-4" />
-            Verify & Confirm Status
+            Verify Proof & Approve
           </button>
-        </div>
+          <Dialog open={verifyModalOpen} onOpenChange={setVerifyModalOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Verify Proof</DialogTitle>
+                <DialogDescription>
+                  <div className="mb-4">
+                    <p className="text-sm text-gray-700 mb-3">
+                      Please enter the string you want to prove and verify your
+                      application.
+                    </p>
+                    <input
+                      type="text"
+                      placeholder="Enter text to prove..."
+                      value={candidateProofText}
+                      onChange={(e) => setCandidateProofText(e.target.value)}
+                      className="w-full mb-2 px-3 py-2 border border-gray-300 rounded-lg"
+                      disabled={isProving}
+                    />
+                  </div>
+                  <button
+                    onClick={async () => {
+                      setIsProving(true);
+                      await new Promise((res) => setTimeout(res, 10000));
+                      setIsProving(false);
+                      setVerifyModalOpen(false);
+                      // Call blockchain to update status to approved
+                      onStatusChange(application.id, "approved");
+                    }}
+                    disabled={!candidateProofText || isProving}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 text-sm font-medium"
+                  >
+                    {isProving ? "Verifying... (wait 10s)" : "Submit & Verify"}
+                  </button>
+                </DialogDescription>
+              </DialogHeader>
+            </DialogContent>
+          </Dialog>
+        </>
       )}
 
       {/* Status Messages for Different Scenarios */}
@@ -209,7 +448,7 @@ const ApplicationCard: React.FC<ApplicationCardProps> = ({
           </div>
         )}
 
-      {application.status === "approved" &&
+      {/* {application.status === "approved" &&
         userRole === "candidate" &&
         !application.companyAction?.proofDocument && (
           <div className="mb-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
@@ -218,7 +457,7 @@ const ApplicationCard: React.FC<ApplicationCardProps> = ({
               the proof document.
             </p>
           </div>
-        )}
+        )} */}
 
       {application.status === "verified" && (
         <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
@@ -263,7 +502,7 @@ const ApplicationCard: React.FC<ApplicationCardProps> = ({
                 </span>
               </div>
             )}
-            {application.companyAction?.proofDocument && (
+            {/* {application.companyAction?.proofDocument && (
               <div className="flex justify-between text-xs text-gray-600">
                 <span>Proof document uploaded</span>
                 <span>
@@ -272,7 +511,7 @@ const ApplicationCard: React.FC<ApplicationCardProps> = ({
                   ).toLocaleDateString()}
                 </span>
               </div>
-            )}
+            )} */}
             {application.candidateVerified && application.verificationDate && (
               <div className="flex justify-between text-xs text-gray-600">
                 <span>Verified by candidate</span>
