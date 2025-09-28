@@ -1,9 +1,10 @@
 import React from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { LoginForm } from "./LoginForm";
 import { GlobalContextProvider } from "./Context/GlobalContext";
 import Loading from "./components/Loading";
 import { useGlobalContext } from "./Context/useGlobalContext";
-import { ProtectedRoute } from "./components/ProtectedLayout";
+import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AIAgent } from "./candidate/AIAgent";
 import MainLayout from "./components/Layout/MainLayout";
 import { JobSearch } from "./candidate/JobSearch";
@@ -18,7 +19,8 @@ import { JobManagement } from "./company/JobManagement";
 // Replace this with any of the networks listed at https://github.com/wevm/viem/blob/main/src/chains/index.ts
 import { flowTestnet } from "viem/chains";
 import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
-import { LoginForm } from "./LoginForm";
+import Option from "./Option";
+import CommonDashboard from "./Shared/CommonDashboard"
 
 const AppContent: React.FC = () => {
   const { loading } = useGlobalContext();
@@ -44,6 +46,7 @@ const AppContent: React.FC = () => {
         <Route path="ai-agent" element={<AIAgent />} />
         <Route path="profile" element={<Profile />} />
         <Route path="applications" element={<ApplicationStatus />} />
+        <Route path="commondashboard" element={<CommonDashboard />} />
       </Route>
 
       {/* Company routes */}
@@ -53,10 +56,12 @@ const AppContent: React.FC = () => {
         <Route path="profile" element={<CompanyInfo />} />
         <Route index element={<CompanyOverview />} />
         <Route path="jobs" element={<JobManagement />} />
+        <Route path="commondashboard" element={<CommonDashboard />} />
       </Route>
+      <Route path="/option" element={<Option />} />
+      <Route path="/" element={<LoginForm />} />
 
       <Route path="*" element={<div>Page not found</div>} />
-      <Route path="/" element={<LoginForm />} />
     </Routes>
   );
 };

@@ -1,14 +1,6 @@
+import { useGlobalContext } from "@/Context/useGlobalContext";
 import type { Application, Company } from "@/types";
-import {
-  Clock,
-  CheckCircle,
-  Calendar,
-  FileText,
-  Mail,
-  User,
-  MapPin,
-  Star,
-} from "lucide-react";
+import { Clock, CheckCircle, Mail, User, MapPin, Star } from "lucide-react";
 import { useState } from "react";
 
 // Mock data for applications
@@ -32,18 +24,17 @@ const mockApplications: Application[] = [
       company: {} as Company,
     },
     candidate: {
-      id: "1",
+      candidateId: "1",
       email: "john.doe@example.com",
       name: "John Doe",
-      type: "candidate",
-      createdAt: "2024-01-01",
-      title: "Senior Frontend Developer",
-      experience: 6,
+      description: [
+        "Passionate developer with 6+ years of experience in React and modern web technologies.",
+      ],
+      contacts: ["john.doe@example.com", "+1-555-0123", "San Francisco, CA"],
+      education: ["BS Computer Science"],
       skills: ["React", "TypeScript", "JavaScript", "Node.js"],
-      location: "San Francisco, CA",
-      bio: "Passionate developer with 6+ years of experience in React and modern web technologies.",
-      education: "BS Computer Science",
-      phone: "+1-555-0123",
+      resumePath: ["/path/to/resume.pdf"],
+      profileScore: "92",
     },
     status: "pending",
     appliedAt: "2024-01-20",
@@ -69,20 +60,19 @@ const mockApplications: Application[] = [
       company: {} as Company,
     },
     candidate: {
-      id: "2",
+      candidateId: "2",
       email: "jane.smith@example.com",
       name: "Jane Smith",
-      type: "candidate",
-      createdAt: "2024-01-01",
-      title: "Full Stack Developer",
-      experience: 4,
+      description: [
+        "Full stack developer with expertise in React and Python backend development.",
+      ],
+      contacts: ["jane.smith@example.com", "+1-555-0456", "New York, NY"],
+      education: ["MS Computer Science"],
       skills: ["React", "Python", "AWS", "Docker"],
-      location: "New York, NY",
-      bio: "Full stack developer with expertise in React and Python backend development.",
-      education: "MS Computer Science",
-      phone: "+1-555-0456",
+      resumePath: ["/path/to/resume2.pdf"],
+      profileScore: "88",
     },
-    status: "application_accepted",
+    status: "accepted",
     appliedAt: "2024-01-18",
     compatibilityScore: 88,
     aiApplied: true,
@@ -94,12 +84,10 @@ export const ApplicationTracking: React.FC = () => {
   const [selectedApplication, setSelectedApplication] =
     useState<Application | null>(null);
 
+  const { companyApplications: companyApplication } = useGlobalContext();
+
   // Mock data
   const companyApplications = mockApplications;
-  const filteredApplications =
-    selectedStatus === "all"
-      ? companyApplications
-      : companyApplications.filter((app) => app.status === selectedStatus);
 
   const statusConfig = {
     pending: {
@@ -107,30 +95,15 @@ export const ApplicationTracking: React.FC = () => {
       color: "bg-yellow-100 text-yellow-800",
       label: "Pending Review",
     },
-    application_accepted: {
+    reviewed: {
       icon: CheckCircle,
       color: "bg-blue-100 text-blue-800",
-      label: "Application Accepted",
+      label: "Reviewed",
     },
-    interview_scheduled: {
-      icon: Calendar,
-      color: "bg-purple-100 text-purple-800",
-      label: "Interview Scheduled",
-    },
-    interview_completed: {
-      icon: CheckCircle,
-      color: "bg-indigo-100 text-indigo-800",
-      label: "Interview Completed",
-    },
-    offer_given: {
-      icon: FileText,
-      color: "bg-orange-100 text-orange-800",
-      label: "Offer Letter Given",
-    },
-    offer_accepted: {
+    accepted: {
       icon: Star,
       color: "bg-green-100 text-green-800",
-      label: "Offer Accepted",
+      label: "Accepted",
     },
     rejected: {
       icon: User,
@@ -204,7 +177,7 @@ export const ApplicationTracking: React.FC = () => {
 
       {/* Applications List */}
       <div className="space-y-4">
-        {filteredApplications.length === 0 ? (
+        {companyApplication && companyApplication.length === 0 ? (
           <div className="text-center py-12 bg-white rounded-xl border border-gray-100">
             <User className="w-16 h-16 text-gray-300 mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-gray-900 mb-2">
@@ -215,7 +188,8 @@ export const ApplicationTracking: React.FC = () => {
             </p>
           </div>
         ) : (
-          filteredApplications.map((application) => {
+          companyApplication &&
+          companyApplication.map((application) => {
             const StatusIcon = statusConfig[application.status]?.icon || User;
             const statusStyle =
               statusConfig[application.status]?.color ||
@@ -238,9 +212,6 @@ export const ApplicationTracking: React.FC = () => {
                         <h3 className="text-xl font-semibold text-gray-900">
                           {application.candidate.name}
                         </h3>
-                        <p className="text-gray-600">
-                          {application.candidate.title}
-                        </p>
                       </div>
                       {application.aiApplied && (
                         <span className="px-2 py-1 bg-purple-100 text-purple-800 text-xs font-medium rounded-full">
@@ -261,7 +232,9 @@ export const ApplicationTracking: React.FC = () => {
                           Experience
                         </p>
                         <p className="text-gray-900">
-                          {application.candidate.experience} years
+                          Experience Level:{" "}
+                          {application.candidate.profileScore ||
+                            "Not specified"}
                         </p>
                       </div>
                       <div>
@@ -270,7 +243,8 @@ export const ApplicationTracking: React.FC = () => {
                         </p>
                         <p className="text-gray-900 flex items-center">
                           <MapPin className="w-4 h-4 mr-1" />
-                          {application.candidate.location}
+                          {application.candidate.contacts?.[2] ||
+                            "Location not specified"}
                         </p>
                       </div>
                       <div>
@@ -296,6 +270,15 @@ export const ApplicationTracking: React.FC = () => {
                             {skill}
                           </span>
                         ))}
+                      </div>
+                      <div className="flex space-y-6 flex-col mt-4">
+                        <p className="text-md font-bold text-gray-700 mb-2">
+                          Description
+                        </p>
+                        <p className="text-gray-600">
+                          {application.candidate.description?.[0] ||
+                            "No description available"}
+                        </p>
                       </div>
                     </div>
 
@@ -335,14 +318,11 @@ export const ApplicationTracking: React.FC = () => {
                         <>
                           <button
                             onClick={() =>
-                              handleStatusUpdate(
-                                application.id,
-                                "application_accepted"
-                              )
+                              handleStatusUpdate(application.id, "reviewed")
                             }
                             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
                           >
-                            Accept Application
+                            Mark as Reviewed
                           </button>
                           <button
                             onClick={() =>
@@ -355,54 +335,25 @@ export const ApplicationTracking: React.FC = () => {
                         </>
                       )}
 
-                      {application.status === "application_accepted" && (
-                        <button
-                          onClick={() =>
-                            handleStatusUpdate(
-                              application.id,
-                              "interview_scheduled"
-                            )
-                          }
-                          className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm"
-                        >
-                          Schedule Interview
-                        </button>
-                      )}
-
-                      {application.status === "interview_scheduled" && (
-                        <button
-                          onClick={() =>
-                            handleStatusUpdate(
-                              application.id,
-                              "interview_completed"
-                            )
-                          }
-                          className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm"
-                        >
-                          Mark Completed
-                        </button>
-                      )}
-
-                      {application.status === "interview_completed" && (
-                        <button
-                          onClick={() =>
-                            handleStatusUpdate(application.id, "offer_given")
-                          }
-                          className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors text-sm"
-                        >
-                          Send Offer
-                        </button>
-                      )}
-
-                      {application.status === "offer_given" && (
-                        <button
-                          onClick={() =>
-                            handleStatusUpdate(application.id, "offer_accepted")
-                          }
-                          className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm"
-                        >
-                          Mark Accepted
-                        </button>
+                      {application.status === "reviewed" && (
+                        <>
+                          <button
+                            onClick={() =>
+                              handleStatusUpdate(application.id, "accepted")
+                            }
+                            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm"
+                          >
+                            Accept
+                          </button>
+                          <button
+                            onClick={() =>
+                              handleStatusUpdate(application.id, "rejected")
+                            }
+                            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm"
+                          >
+                            Reject
+                          </button>
+                        </>
                       )}
                     </div>
 
@@ -448,10 +399,12 @@ export const ApplicationTracking: React.FC = () => {
                     {selectedApplication.candidate.name}
                   </h3>
                   <p className="text-gray-600">
-                    {selectedApplication.candidate.title}
+                    {selectedApplication.candidate.description?.[0] ||
+                      "No description"}
                   </p>
                   <p className="text-sm text-gray-500">
-                    {selectedApplication.candidate.email}
+                    {selectedApplication.candidate.email ||
+                      selectedApplication.candidate.contacts?.[0]}
                   </p>
                 </div>
               </div>
@@ -462,7 +415,9 @@ export const ApplicationTracking: React.FC = () => {
                     Experience
                   </p>
                   <p className="text-gray-900">
-                    {selectedApplication.candidate.experience} years
+                    Profile Score:{" "}
+                    {selectedApplication.candidate.profileScore ||
+                      "Not specified"}
                   </p>
                 </div>
                 <div>
@@ -470,7 +425,8 @@ export const ApplicationTracking: React.FC = () => {
                     Education
                   </p>
                   <p className="text-gray-900">
-                    {selectedApplication.candidate.education}
+                    {selectedApplication.candidate.education?.[0] ||
+                      "Not specified"}
                   </p>
                 </div>
                 <div>
@@ -478,7 +434,8 @@ export const ApplicationTracking: React.FC = () => {
                     Location
                   </p>
                   <p className="text-gray-900">
-                    {selectedApplication.candidate.location}
+                    {selectedApplication.candidate.contacts?.[2] ||
+                      "Not specified"}
                   </p>
                 </div>
                 <div>
@@ -486,15 +443,19 @@ export const ApplicationTracking: React.FC = () => {
                     Phone
                   </p>
                   <p className="text-gray-900">
-                    {selectedApplication.candidate.phone || "Not provided"}
+                    {selectedApplication.candidate.contacts?.[1] ||
+                      "Not provided"}
                   </p>
                 </div>
               </div>
 
               <div>
-                <p className="text-sm font-medium text-gray-700 mb-2">Bio</p>
+                <p className="text-sm font-medium text-gray-700 mb-2">
+                  Description
+                </p>
                 <p className="text-gray-900">
-                  {selectedApplication.candidate.bio}
+                  {selectedApplication.candidate.description?.[0] ||
+                    "No description available"}
                 </p>
               </div>
 

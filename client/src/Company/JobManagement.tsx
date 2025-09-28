@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import type { Company, Job } from "../types";
+import type { Company, ContractJob, Job } from "../types";
 import { v4 as uuidv4 } from "uuid";
 import {
   Dialog,
@@ -35,7 +35,6 @@ import { contractAbi } from "@/lib/contractAbi";
 import type { Hex } from "viem";
 import { flowTestnet } from "viem/chains";
 import { usePrivy } from "@privy-io/react-auth";
-import { CompanyStatus, JobType, LocationType } from "@/lib/utils";
 
 // Mock data
 const mockCompany: Company = {
@@ -138,8 +137,12 @@ type JobFormData = z.infer<typeof jobFormSchema>;
 
 export const JobManagement: React.FC = () => {
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const { jobWalletClient, contractAddress, jobPublicClient } =
-    useGlobalContext();
+  const {
+    jobWalletClient,
+    contractAddress,
+    jobPublicClient,
+    job: companyJobs,
+  } = useGlobalContext();
 
   const { user } = usePrivy();
   console.log("user from privy", user);
@@ -160,7 +163,6 @@ export const JobManagement: React.FC = () => {
 
   const company = mockCompany;
   // const companyJobs = mockJobs;
-  const [companyJobs, setCompanyJobs] = useState<Job[]>([]);
   const applications = mockApplications;
 
   const onSubmit = (data: JobFormData) => {
@@ -227,68 +229,6 @@ export const JobManagement: React.FC = () => {
       console.log("Job posted on-chain with tx:", tx);
     })();
   };
-
-  useEffect(() => {
-    if (!jobWalletClient) return;
-    if (!jobPublicClient) return;
-    if (!user) return;
-
-    (async function () {
-      try {
-        const jobs = await jobPublicClient.readContract({
-          address: contractAddress as Hex,
-          abi: contractAbi,
-          functionName: "getAllJobs",
-          args: [],
-        });
-
-        console.log("Fetched jobs from contract:", jobs);
-
-        interface ContractJob {
-          jobId: string;
-          companyId: string;
-          title: string;
-          description: string;
-          requirements: string[];
-          skills: string[];
-          location: number; // enum index
-          salaryRange: string[]; // two values: [min, max]
-          jobType: number; // enum index
-          status: number; // enum index
-        }
-
-        console.log(user.google?.email, "user email");
-        const parsedJobs = (jobs as ContractJob[])
-          .filter(
-            (job) =>
-              job.companyId == user.google?.email || job.companyId == user.id
-          ) // only jobs for this company
-          .map((job) => ({
-            id: job.jobId,
-            companyId: job.companyId,
-            title: job.title,
-            description: job.description,
-            requirements: job.requirements,
-            skills: job.skills,
-            location: LocationType[job.location], // map enum index → string
-            type: JobType[job.jobType], // map enum index → string
-            salary: {
-              min: Number(job.salaryRange?.[0] || 0),
-              max: Number(job.salaryRange?.[1] || 0),
-              currency: "USD",
-            },
-            postedAt: new Date().toISOString(),
-            status: CompanyStatus[job.status], // map enum index → string
-          }));
-
-        console.log(parsedJobs, "loggggg");
-
-        setCompanyJobs(parsedJobs);
-      } catch (err) {
-        console.error("Error fetching jobs:", err);
-      }
-    })();
-  }, [jobWalletClient, jobPublicClient, contractAddress, user]);
 
   const getApplicationCount = (jobId: string) =>
     applications.filter((app) => app.jobId === jobId).length;
@@ -473,7 +413,7 @@ export const JobManagement: React.FC = () => {
 
       {/* Jobs List */}
       <div className="space-y-6">
-        {companyJobs.length === 0 ? (
+        {companyJobs && companyJobs.length === 0 ? (
           <div
             className="text-center py-16 border border-dashed border-gray-300 rounded-lg"
             key={0}
@@ -493,6 +433,7 @@ export const JobManagement: React.FC = () => {
             </button>
           </div>
         ) : (
+          companyJobs &&
           companyJobs.map((job) => (
             <div
               key={job.id}

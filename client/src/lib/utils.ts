@@ -22,7 +22,7 @@ export const LocationType: Record<number, "remote" | "onsite" | "hybrid"> = {
   2: "hybrid",
 };
 
-export const CompanyStatus: Record<number, "active" | "inactive"> = {
+export const JobStatus: Record<number, "active" | "inactive"> = {
   0: "active",
   1: "inactive",
 };

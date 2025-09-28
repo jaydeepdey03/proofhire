@@ -1,5 +1,11 @@
 import React, { useEffect, useState } from "react";
-import type { Candidate, Application, Job, Company } from "../types";
+import type {
+  Candidate,
+  Application,
+  Job,
+  Company,
+  ContractJob,
+} from "../types";
 import {
   Search,
   MapPin,
@@ -15,7 +21,7 @@ import { useGlobalContext } from "@/Context/useGlobalContext";
 import { usePrivy } from "@privy-io/react-auth";
 import { contractAbi } from "@/lib/contractAbi";
 import type { Hex } from "viem";
-import { CompanyStatus, JobType, LocationType } from "@/lib/utils";
+import { JobStatus, JobType, LocationType } from "@/lib/utils";
 
 // Mock candidate data
 const mockCandidate: Candidate = {
@@ -208,19 +214,6 @@ export const JobSearch: React.FC = () => {
 
         console.log("Fetched jobs from contract:", jobs);
 
-        interface ContractJob {
-          jobId: string;
-          companyId: string;
-          title: string;
-          description: string;
-          requirements: string[];
-          skills: string[];
-          location: number; // enum index
-          salaryRange: string[]; // two values: [min, max]
-          jobType: number; // enum index
-          status: number; // enum index
-        }
-
         const filteredContractJobs = (jobs as ContractJob[]).filter(
           (job) =>
             job.companyId !== user.google?.email || job.companyId !== user.id
@@ -286,7 +279,7 @@ export const JobSearch: React.FC = () => {
               currency: "USD",
             },
             postedAt: new Date().toISOString(),
-            status: CompanyStatus[job.status], // map enum index → string
+            status: JobStatus[job.status], // map enum index → string
           };
         });
 

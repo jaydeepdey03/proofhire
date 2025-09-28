@@ -1,12 +1,4 @@
-import {
-  Building2,
-  User,
-  Briefcase,
-  FileText,
-  Bot,
-  LogOut,
-  Search,
-} from "lucide-react";
+import { Building2, User, Briefcase, Bot, LogOut, Search } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { usePrivy } from "@privy-io/react-auth";
 
@@ -24,7 +16,12 @@ export const Sidebar: React.FC = () => {
   const companyTabs = [
     { id: "overview", label: "Overview", icon: Building2 },
     { id: "jobs", label: "Jobs", icon: Briefcase },
-    { id: "applications", label: "Applications", icon: FileText },
+    // { id: "applications", label: "Applications", icon: FileText },
+    {
+      id: "commondashboard",
+      label: "Common Dashboard",
+      icon: Building2,
+    },
     { id: "ai-search", label: "AI Search", icon: Search },
     { id: "profile", label: "Profile", icon: User },
   ];
@@ -32,7 +29,12 @@ export const Sidebar: React.FC = () => {
   const candidateTabs = [
     { id: "overview", label: "Overview", icon: User },
     { id: "jobs", label: "Find Jobs", icon: Briefcase },
-    { id: "applications", label: "My Applications", icon: FileText },
+    // { id: "applications", label: "My Applications", icon: FileText },
+    {
+      id: "commondashboard",
+      label: "Common Dashboard",
+      icon: Building2,
+    },
     { id: "ai-agent", label: "AI Agent", icon: Bot },
     { id: "profile", label: "Profile", icon: User },
   ];

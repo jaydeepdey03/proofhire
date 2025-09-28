@@ -16,16 +16,41 @@ export interface Company extends User {
   logo?: string;
 }
 
-export interface Candidate extends User {
-  type: "candidate";
-  title: string;
-  experience: number;
+// {
+//     "candidateId": "jaydeep.dey03@gmail.com",
+//     "name": "Jaydeep Candidate",
+//     "description": [
+//         "Passionate full-stack developer with 5+ years of experience in React and modern web technologies. Love building user-friendly applications and learning new technologies."
+//     ],
+//     "contacts": [
+//         "jaydeep.dey03@gmail.com",
+//         "+1-555-0123",
+//         "Bangalore, IN"
+//     ],
+//     "education": [
+//         "BTech Computer Science - VIT University"
+//     ],
+//     "skills": [
+//         "Typescript",
+//         "React",
+//         "Javascript"
+//     ],
+//     "resumePath": [
+//         "/Users/jaydeepdey/Desktop/doc/Resume_Jaydeep_2024.pdf"
+//     ],
+//     "profileScore": ""
+// }
+
+export interface Candidate {
+  candidateId: string;
+  name: string;
+  email: string;
+  description: string[];
+  contacts: string[];
+  education: string[];
   skills: string[];
-  location: string;
-  resume?: string;
-  bio: string;
-  education: string;
-  phone?: string;
+  resumePath: string[];
+  profileScore: string;
 }
 
 export interface Job {
@@ -54,14 +79,7 @@ export interface Application {
   candidateId: string;
   job: Job;
   candidate: Candidate;
-  status:
-    | "pending"
-    | "application_accepted"
-    | "interview_scheduled"
-    | "interview_completed"
-    | "offer_given"
-    | "offer_accepted"
-    | "rejected";
+  status: "pending" | "reviewed" | "accepted" | "rejected";
   appliedAt: string;
   compatibilityScore?: number;
   aiApplied?: boolean;
@@ -81,4 +99,76 @@ export interface AISearchQuery {
     skills?: string[];
     location?: string;
   };
+}
+
+export interface ContractJob {
+  jobId: string;
+  companyId: string;
+  title: string;
+  description: string;
+  requirements: string[];
+  skills: string[];
+  location: number; // enum index
+  salaryRange: string[]; // two values: [min, max]
+  jobType: number; // enum index
+  status: number; // enum index
+}
+
+export interface ContractApplication {
+  jobLocation: any;
+  candidateEmail: string;
+  candidatePhone: string;
+  resumeUrl: string;
+  coverLetter: string;
+  jobTitle: any;
+  companyName: any;
+  companyId: any;
+  candidateName: any;
+  applicationId: string;
+  jobId: string;
+  candidateId: string;
+  applicationDate: string;
+  status: number; // enum index
+}
+
+export interface CompanyApplicationInterface {
+  id: string;
+  jobId: string;
+  candidateId: string;
+  job: Job;
+  candidate: Candidate;
+  status: "pending" | "reviewed" | "accepted" | "rejected";
+  appliedAt: string;
+  compatibilityScore?: number;
+  aiApplied?: boolean;
+}
+
+export interface Application1 {
+  jobTitle: any;
+  companyName: any;
+  candidateName: any;
+  appliedDate: string | number | Date;
+  id: string;
+  job: Job;
+  company: Company;
+  candidate: Candidate;
+  status: "approved" | "rejected" | "pending" | "verified";
+  appliedAt: string;
+  companyAction?: {
+    status: "approved" | "rejected";
+    actionDate: string;
+    proofDocument?: {
+      name: string;
+      url: string;
+      uploadDate: string;
+    };
+  } | null;
+  verificationDate?: string;
+}
+
+export interface User1 {
+  id: string;
+  name: string;
+  email: string;
+  role: "candidate" | "company";
 }
