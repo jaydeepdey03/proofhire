@@ -132,6 +132,73 @@ const ApplicationCard: React.FC<ApplicationCardProps> = ({
   const [candidateProofText, setCandidateProofText] = useState("");
   const [isProving, setIsProving] = useState(false);
 
+  async function generatePDFProof(
+    file: File,
+    options = {} as {
+      pageNumber?: number;
+      offset?: number;
+      subString?: string;
+      apiUrl?: string;
+    }
+  ) {
+    const {
+      pageNumber = 0,
+      offset = 0,
+      subString = "",
+      apiUrl = "http://localhost:3001/prove",
+    } = options;
+    // Validate input
+    if (!file) {
+      throw new Error("No file provided");
+    }
+
+    if (file.type !== "application/pdf") {
+      throw new Error("File must be a PDF");
+    }
+
+    try {
+      // Convert file to bytes array
+      const buffer = await file.arrayBuffer();
+      const pdfBytes = Array.from(new Uint8Array(buffer));
+
+      // Make API request with all required fields
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          pdf_bytes: pdfBytes,
+          page_number: pageNumber,
+          offset: offset,
+          sub_string: subString,
+        }),
+      });
+
+      // Check response status
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      // Parse and return proof data
+      const proofData = await response.json();
+      return proofData;
+    } catch (error: any) {
+      // Handle specific error types
+      if (
+        error.message.includes("fetch") ||
+        error.message.includes("Failed to fetch") ||
+        error.message.includes("ECONNREFUSED")
+      ) {
+        throw new Error(
+          "Prover API is not running. Please start the server at " + apiUrl
+        );
+      }
+
+      // Re-throw other errors
+      throw error;
+    }
+  }
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-lg transition-all duration-300 hover:border-gray-300">
       <div className="flex justify-between items-start mb-4">
@@ -275,9 +342,11 @@ const ApplicationCard: React.FC<ApplicationCardProps> = ({
                     disabled={!file || isGeneratingProof || isUpdatingStatus}
                     className="mt-4 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60"
                     onClick={async () => {
+                      if (!file) return;
                       setIsGeneratingProof(true);
                       // Simulate proof generation
-                      await new Promise((res) => setTimeout(res, 60000));
+                      await generatePDFProof(file);
+                      //
                       setIsGeneratingProof(false);
                       setIsUpdatingStatus(true);
                       // Call blockchain (simulate with status update)
